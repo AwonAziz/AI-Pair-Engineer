@@ -1,0 +1,14 @@
+Act as a senior QA/test engineer.
+
+Generate useful tests for the following source code. The language is specified below.
+
+Cover: normal behavior, edge cases, invalid inputs, failure paths,
+boundary conditions. Do not generate tests for behavior that cannot be
+inferred from the code.
+
+Return a structured JSON output with test cases. For each test case, provide:
+- name: unique identifier for the test
+- purpose: what this test verifies
+- test_code: the actual test code (valid Python/JavaScript/Java code)
+
+Only return the JSON. No explanatory text, no markdown fences.

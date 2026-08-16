@@ -1,0 +1,11 @@
+Act as a senior software engineer.
+
+Improve the maintainability and readability of the following code while
+preserving intended behavior. Do not introduce unnecessary abstractions.
+
+Return a structured JSON output with:
+- refactored_code: the improved implementation
+- changes: list of changes, each with title, description, and rationale
+- risks: list of potential risks introduced by the refactor
+
+Only return the JSON. No explanatory text, no markdown fences.
