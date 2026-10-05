@@ -1,8 +1,0 @@
-pyproject.toml
-ai_pair_engineer.egg-info/PKG-INFO
-ai_pair_engineer.egg-info/SOURCES.txt
-ai_pair_engineer.egg-info/dependency_links.txt
-ai_pair_engineer.egg-info/top_level.txt
-tests/test_agents.py
-tests/test_parser.py
-tests/test_schemas.py

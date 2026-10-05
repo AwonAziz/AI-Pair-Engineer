@@ -1,185 +1,326 @@
 # AI Pair Engineer
 
-## Problem
+A four-stage AI review pipeline that runs **before** a human opens the pull
+request: analyse, generate tests, refactor, then adversarially verify the
+refactor against the original.
 
-Developers often receive code reviews only after committing work or opening a pull request. Late-stage feedback creates rework, delays, and context switching. There is a need for immediate, structured feedback during the coding process, before human review.
+The point is the last stage. Most AI review tools ask a model to grade code it
+also helped write. This pipeline makes the reviewer explicitly hostile, gives it
+the original and the refactor side by side, and tells it to default to "not
+approved".
 
-AI Pair Engineer addresses this by providing a multi-stage AI workflow that analyzes code, generates tests, suggests refactoring, and provides a final quality review — all before a human reviewer looks at the code.
-
-## Solution
-
-AI Pair Engineer is a multi-agent pipeline that processes code through four specialized stages:
-
-1. **Code Analyzer** — Performs static + AI analysis for quality, maintainability, readability, complexity, error handling, performance, and security issues.
-2. **Test Engineer** — Generates targeted test cases covering normal behavior, edge cases, invalid inputs, failure paths, and boundary conditions.
-3. **Refactoring Engineer** — Improves code maintainability and readability while preserving intended behavior, with explicit change rationale and risk assessment.
-4. **Final Reviewer** — Compares original and refactored implementations, checking for behavior preservation, correctness, regressions, and overall quality.
-
-Each stage passes only task-relevant context to the next, reducing token consumption, latency, and irrelevant information propagation.
-
-The system uses Pydantic models for strict structured output validation, ensuring results are predictable and actionable. Low temperature and retry logic provide deterministic, reliable outputs.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    A[Developer] --> B[Streamlit UI]
-    B --> C[Input Validation]
-    C --> D[Code Analyzer]
-    D --> E[Test Engineer]
-    D --> F[Refactoring Engineer]
-    E --> G[Final Reviewer]
-    F --> G
-    G --> H[Final Report]
+```
+analyzer ──┬──> tester  ──┐
+           └──> refactor ──┴──> reviewer ──> verdict
 ```
 
-### Agent Responsibilities
+---
 
-| Agent | Responsibility |
-|-------|----------------|
-| **Code Analyzer** | Identifies code smells, maintainability issues, readability problems, architectural concerns, complexity, error handling weaknesses, performance bottlenecks, security vulnerabilities, and code duplication. |
-| **Test Engineer** | Generates useful tests covering normal behavior, edge cases, invalid inputs, failure paths, and boundary conditions. Tests are grounded in the code and analyzer findings. |
-| **Refactoring Engineer** | Improves maintainability and readability while preserving behavior. Explains each change and associated risks. Avoids unnecessary abstractions. |
-| **Final Reviewer** | Strict comparison of original vs. refactored code. Checks behavior preservation, correctness, maintainability, complexity, testability, security, performance, and regressions. Does not approve stylistic changes alone. |
+## Why the stages are separated
 
-## Context Management
+Each stage sees only the context it needs, and only that. This is a token
+decision and a correctness one:
 
-The system deliberately passes only task-relevant context between agents to reduce token consumption, latency, and irrelevant information propagation.
+| Stage | Receives | Never sees |
+|---|---|---|
+| Analyzer | source + local static analysis | anything |
+| Test Engineer | source + error-handling and security findings | the refactor |
+| Refactor Engineer | source + maintainability findings | the tests, and all security findings |
+| Reviewer | original + refactor + test names + unresolved high findings | — |
 
-- **Analyzer** receives: language + source code + static analysis evidence
-- **Tester** receives: language + source code + analyzer findings (filtered to testing-relevant categories)
-- **Refactor** receives: language + source code + analyzer findings (filtered to maintainability/readability categories)
-- **Reviewer** receives: original code + refactored code + generated tests + key analyzer findings
+Two of those exclusions are the interesting part:
 
-This scoped context budgeting ensures each agent focuses on its specific responsibility without noise from upstream/downstream concerns.
+- **The tester never sees the refactor.** Otherwise it writes tests that
+  describe the refactored code, which is how a behavioural regression gets
+  locked in as an expected result.
+- **The refactorer never sees security findings.** A correctness fix bundled
+  into a refactor is the one change a reviewer is least able to verify, so
+  those defects are reported under `risks` instead of silently repaired.
 
-## Prompt Reliability
+---
 
-The system does not blindly trust LLM output. Reliability mechanisms include:
+## Two ways to run it
 
-- **Explicit output schemas** via Pydantic models — every finding, test case, and change must conform to a validated structure
-- **JSON parsing** that handles three formats: raw JSON, JSON inside ```json fences, and JSON with minor surrounding text
-- **Retry/correction behavior** — if parsing fails, the system retries with an explicit correction prompt
-- **Low temperature** (0.0-0.1) for deterministic code analysis
-- **Clear separation** of system instructions and user code in prompts
-- **Structured validation** — malformed responses raise errors instead of silently fabricating results
+### Static analysis only, no API key
 
-If the LLM returns unexpected format, the system attempts correction before reporting failure.
+Real AST analysis. Works offline, and the line numbers are exact because they
+come from the parse tree rather than from a model guessing.
 
-## Security
+```console
+$ pair-engineer examples/legacy_service.py --static-only
+7 functions
+0 classes
+  get_user (line 30): complexity 6, undocumented
+  build_export_path (line 54): complexity 2, undocumented
+  ...
+  bare except at line 41
+  bare except at line 49
+  mutable default at line 92
+```
 
-The user can submit arbitrary code. **DO NOT execute submitted code directly on the host system.**
+It computes McCabe cyclomatic complexity, maximum nesting depth, argument
+counts, return counts, and docstring coverage per function, and flags bare
+`except:`, mutable default arguments (including ones that alias a module-level
+mutable such as `def f(cache=CACHE)`), unused imports, over-long lines, and
+TODO comments.
 
-The prototype generates tests but does not automatically execute user code. If test execution is implemented in the future, it MUST be isolated in a sandbox/container with strict CPU, memory, filesystem, network, and execution-time limits.
+### The full pipeline
 
-Submitted source code is treated as untrusted input. User code is never interpolated into shell commands.
+Needs an OpenRouter key.
 
-## Technology Stack
+```console
+$ export OPENROUTER_API_KEY=sk-or-...
+$ pair-engineer examples/sample.py
+```
 
-- Python 3.11+
-- Streamlit for the frontend
-- OpenAI-compatible API client (OpenRouter)
-- Pydantic for structured output validation
-- python-dotenv for environment configuration
-- Minimal dependencies — no orchestration frameworks (LangChain, LangGraph, CrewAI, AutoGen)
+```
+Two correctness defects and one maintainability problem.
 
-## Running Locally
+HIGH     error_handling   Unvalidated dict access raises KeyError
+         at line 3, in `process_users`
+         user['age'] is read without checking the key exists.
+         fix: Use user.get('age') and skip malformed records.
+
+MEDIUM   complexity       Nested conditionals flatten poorly
+         at line 3, in `process_users`
+         Four levels of nesting for one filter.
+         fix: Use guard clauses.
+
+Quality score 74/100
+LOW 1  MEDIUM 1  HIGH 1
+
+Verdict NEEDS_REVIEW  score 72/100  regression risk high
+Preserve the KeyError or update the callers that relied on it.
+  - Original raised KeyError on a missing age key; the refactor silently skips it.
+```
+
+> The verdict block above is real output from the test fixtures. Note that the
+> reviewer caught a genuine behaviour change in a refactor that looked correct.
+
+---
+
+## Install
+
+Requires Python 3.11+.
 
 ```bash
-# 1. Create and activate a virtual environment
+git clone https://github.com/AwonAziz/AI-Pair-Engineer
+cd AI-Pair-Engineer
+
 python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-Windows:
-.venv\Scripts\activate
+pip install -e ".[dev]"
 
-Linux/macOS:
-source .venv/bin/activate
+cp .env.example .env             # Windows: copy .env.example .env
+# then add your key to .env
+```
 
-# 2. Install dependencies
-pip install -r requirements.txt
+Any OpenRouter model that reliably emits JSON will work:
 
-# 3. Configure environment variables
-copy .env.example .env
-# Then edit .env:
-# OPENROUTER_API_KEY=your_key_here
-# MODEL=deepseek/deepseek-chat
+```bash
+export MODEL=anthropic/claude-sonnet-4
+```
 
-# 4. Run the application
+### The web UI
+
+```bash
 streamlit run app.py
 ```
 
-## Testing
+The Streamlit app is a thin wrapper. It collects input, calls the pipeline, and
+renders the result. All review logic lives in the package so the CLI and the UI
+cannot drift apart.
+
+---
+
+## CLI
+
+```
+pair-engineer <file> | --stdin
+              [--language python|javascript|typescript|java]
+              [--format text|json|markdown]
+              [--model <id>]
+              [--fail-on critical|high|medium|low|never]
+              [--static-only]
+              [--no-color]
+```
+
+`--format markdown` produces a GitHub-flavoured table, suitable for a PR
+comment.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Clean, or no finding at or above `--fail-on` |
+| 1 | A finding at or above the threshold exists |
+| 2 | Bad usage: missing file, empty input, unknown language |
+| 3 | Misconfiguration, usually a missing API key |
+| 4 | The provider failed, or a stage could not produce a valid result |
+
+The distinction matters in CI: `3` means fix your environment, `4` means the
+upstream provider is down. Treating both as "review failed" trains people to
+ignore the output.
+
+`--fail-on` defaults to `high`. `critical` alone lets serious defects through,
+and `low` fails on style preferences, which is how a gate gets ignored.
+
+---
+
+## Using it in CI
+
+```yaml
+- name: AI review
+  env:
+    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  run: pair-engineer src/ --format markdown >> "$GITHUB_STEP_SUMMARY"
+```
+
+`.github/workflows/self-review.yml` in this repo runs the tool against its own
+diff and comments on the pull request.
+
+---
+
+## Design decisions worth arguing about
+
+**Output is validated, not trusted.** Every stage is parsed into a Pydantic
+model. A response with an enum outside the allowed set, a `confidence` of 7, or
+a missing required field is rejected, not coerced. A confidently wrong review is
+worse than no review. On rejection the stage is retried once with an explicit
+correction prompt; two failures and the run stops with the offending field named.
+
+**Parsing handles what models actually emit.** Bare JSON, JSON in a ```` ```json ````
+fence, unterminated fences from a truncated response, and JSON surrounded by
+prose. The balanced-object scanner is string-aware, so a field containing
+refactored code with unbalanced braces still parses.
+
+**Transport failures and contract failures are different exception types.**
+Retries with exponential backoff plus full jitter, capped at 30 seconds. A 4xx
+other than 429 is not retried, because it will still be a 401 on the third
+attempt. Jitter matters: without it, stages that fail together retry on the same
+tick and re-create the burst that caused the rate limit.
+
+**No import-time side effects.** The API key is resolved on first use. Raising
+at import time means a misconfigured app cannot start far enough to tell you the
+key is missing, and it makes the package unimportable for anyone without one.
+
+**Quality score is deterministic.** `100 - Σ severity weights`, floored at 0,
+with the weights in one dict in `schemas.py` so the UI, the CLI, and the tests
+cannot disagree. The reviewer's own score is separate and comes from the model.
+
+**Findings carry line numbers.** A finding without a location is much harder to
+act on, so `Location` is part of the schema and the analyzer prompt asks for it
+explicitly. The static report's numbers are verified facts, and the prompt tells
+the model to trust them over its own estimates.
+
+---
+
+## Security
+
+Submitted code is treated as untrusted input.
+
+- **No execution.** The tool analyses code; it never runs it. Generated tests
+  are returned as text, not executed.
+- **No shell interpolation.** User code never reaches a shell command. There is
+  no `subprocess` call anywhere in the package.
+- **No key leakage.** The API key is never included in an error message or a log
+  line, and there is a test that asserts this.
+- **Assistant text is not logged.** Responses embed the user's submitted source.
+
+If you extend this to execute generated tests, it must run in a container or
+sandbox with hard CPU, memory, filesystem, network, and wall-clock limits. Do
+not execute untrusted code on the host.
+
+---
+
+## Development
 
 ```bash
-pytest
+pip install -e ".[dev]"
+
+pytest              # 245 tests, no API key needed, no network
+ruff check .
+ruff format --check .
+mypy                # strict
 ```
 
-All tests mock LLM calls and do not require an OPENROUTER_API_KEY. Tests cover:
+| Check | Command |
+|---|---|
+| Tests | `pytest` |
+| Coverage | `pytest --cov=ai_pair_engineer --cov-report=term-missing` |
+| Lint | `ruff check .` |
+| Format | `ruff format .` |
+| Types | `mypy` |
+| All of it | `pre-commit run --all-files` |
 
-- Pydantic schema validation
-- JSON response parsing (raw, fenced, malformed)
-- Empty input handling
-- Python syntax parsing
-- Agent behavior with mocked LLM responses
+Coverage is 95% with branch coverage enabled. Every test mocks the LLM boundary,
+and a fixture fails any test that tries to reach the network for real.
 
-## Example
+`examples/` is excluded from linting on purpose. Those files are
+intentionally defective, and the defects are the demonstration.
 
-The file `examples/sample.py` contains intentionally imperfect but safe Python code that gives the AI meaningful issues to identify:
+---
 
-- Nested conditionals
-- Mixed responsibilities
-- Weak validation
-- Possible KeyError
-- Testability concerns
-- Naming/structure issues
+## Layout
 
-Run the analyzer on this example:
-
-```python
-def process_users(users):
-    results = []
-
-    for user in users:
-        if user["age"] >= 18:
-            if user["email"] != "":
-                name = user["name"].strip().lower()
-                email = user["email"].strip().lower()
-
-                if "@" in email:
-                    results.append({
-                        "name": name,
-                        "email": email,
-                        "adult": True
-                    })
-
-    return results
 ```
+src/ai_pair_engineer/
+├── agents/
+│   ├── base.py        # shared stage machinery, context budgeting
+│   ├── analyzer.py    # stage 1
+│   ├── tester.py      # stage 2
+│   ├── refactor.py    # stage 3
+│   └── reviewer.py    # stage 4
+├── models/schemas.py  # Pydantic contracts + severity weights
+├── services/llm.py    # client, retries, JSON recovery
+├── static/
+│   └── python_analyzer.py   # AST analysis, no API key needed
+├── prompts/           # packaged, loaded via importlib.resources
+├── pipeline.py        # orchestration
+└── cli.py             # command line interface
+```
+
+Prompts are package data loaded through `importlib.resources`, so they resolve
+regardless of the working directory.
+
+---
 
 ## Limitations
 
-- Requires an OpenRouter API key for LLM functionality
-- Test generation is grounded in code structure; highly dynamic or metaprogrammed code may receive fewer relevant tests
-- Refactoring preserves behavior but may not cover all edge cases
-- Security analysis is based on code patterns, not runtime analysis
-- Single-file analysis; repository-level context not supported
-- No automatic test execution (to avoid running untrusted code)
+Worth being explicit about, since "AI reviewer" usually overstates what these
+tools do.
 
-## Future Improvements
+- **One file at a time.** No cross-file or repository-level context, so it
+  cannot see that a helper is defined in a sibling module.
+- **Static analysis is Python-only.** Other languages get the LLM stages but no
+  local evidence. The report says `not available for this language` rather than
+  pretending.
+- **Security findings are pattern-based.** No dataflow analysis, so taint
+  tracking and injection reachability are out of reach.
+- **Generated tests are never run.** They are a starting point, not proof.
+- **Refactors are not verified by execution.** The reviewer compares the two
+  versions by reading them. It is good at catching inverted conditions and
+  dropped branches, and it is not a proof.
+- **Cost scales with file size.** Four calls per file. On a very large file the
+  analyzer prompt is truncated at 20,000 characters.
 
-- Repository-level analysis across multiple files
-- GitHub integration for PR comments
-- AST-aware refactoring with concrete syntax tree transformations
-- Isolated test execution in containers with resource limits
-- Code embeddings/RAG for similar pattern matching
-- Persistent review history across sessions
-- CI/CD integration for pull request feedback
-- Additional language support (Go, Rust, C++, etc.)
+---
 
-## Docker
+## Roadmap
 
-```bash
-docker build -t ai-pair-engineer .
-docker run -p 8501:8501 -v "$PWD:/app" ai-pair-engineer
-```
+- [ ] Diff-aware review: compare against a base branch, not the whole file
+- [ ] Multi-file review with an import graph
+- [ ] Sandboxed test execution with resource limits
+- [ ] SARIF output for GitHub code scanning
+- [ ] AST-aware refactoring verification
+- [ ] A benchmark corpus with known planted defects, to measure whether this
+      actually catches them
 
-The container exposes Streamlit's default port (8501). Ensure OPENROUTER_API_KEY is set in the environment or via a `.env` file mounted into the container.
+The benchmark is the one that matters most. Everything else is plumbing.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).

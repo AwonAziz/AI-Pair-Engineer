@@ -1,0 +1,17 @@
+# Normalise line endings so the repo has one style regardless of who edits it.
+* text=auto eol=lf
+
+*.py text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+.gitignore text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.whl binary

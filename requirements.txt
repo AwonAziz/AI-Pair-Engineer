@@ -1,0 +1,13 @@
+# Runtime configuration
+openai>=1.40
+pydantic>=2.7
+python-dotenv>=1.0
+streamlit>=1.37
+
+# Tooling used by CI, pre-commit, and local development.
+# Equivalent to `pip install -e ".[dev]"`; kept here for environments that
+# install from requirements files directly.
+pytest>=8.0
+pytest-cov>=5.0
+ruff>=0.6
+mypy>=1.11
