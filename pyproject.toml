@@ -60,6 +60,11 @@ source = ["ai_pair_engineer", "benchmarks"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# `benchmarks/` lives at the repo root rather than under src/, so it is not
+# installed and is not on sys.path by default. Without this the benchmark tests
+# import only under `python -m pytest` (which happens to add the cwd) and fail
+# under a bare `pytest`, which is what CI and most editors invoke.
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
 filterwarnings = [
     "error",
