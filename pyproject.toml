@@ -43,12 +43,19 @@ pair-engineer = "ai_pair_engineer.cli:main"
 Homepage = "https://github.com/AwonAziz/AI-Pair-Engineer"
 Issues = "https://github.com/AwonAziz/AI-Pair-Engineer/issues"
 
+# `benchmarks/` deliberately sits outside src/ and is not part of the wheel.
+# It is a development tool for this repository and ships alongside the corpus it
+# measures, so it runs from a clone as `python -m benchmarks`.
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["ai_pair_engineer*"]
 
 [tool.setuptools.package-data]
 ai_pair_engineer = ["prompts/*.txt"]
+
+[tool.coverage.run]
+branch = true
+source = ["ai_pair_engineer", "benchmarks"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -61,10 +68,6 @@ filterwarnings = [
     # The warning is accurate but harmless here.
     "ignore:cannot collect test class:pytest.PytestCollectionWarning",
 ]
-
-[tool.coverage.run]
-branch = true
-source = ["ai_pair_engineer"]
 
 [tool.coverage.report]
 show_missing = true
@@ -109,6 +112,11 @@ ignore = [
 # to find problems in. Linting it would mean fixing the very defects it exists
 # to demonstrate.
 "examples/*" = ["ALL"]
+# Corpus case sources and regression pairs are deliberately defective: bare
+# excepts, eval, mutable defaults, interpolated SQL. Linting them would mean
+# fixing the exact defects they exist to demonstrate. The harness around them is
+# still linted strictly.
+"benchmarks/cases/*" = ["ALL"]
 "app.py" = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -116,7 +124,7 @@ ban-relative-imports = "parents"
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["ai_pair_engineer"]
+packages = ["ai_pair_engineer", "benchmarks"]
 mypy_path = "src"
 strict = true
 warn_unreachable = true
@@ -125,3 +133,11 @@ disallow_any_explicit = false
 [[tool.mypy.overrides]]
 module = ["streamlit.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Corpus sources are untyped on purpose. They are review targets, not
+# library code, and several would need annotations added to stay realistic.
+module = ["benchmarks.cases.*"]
+ignore_errors = true
+follow_imports = "skip"
+

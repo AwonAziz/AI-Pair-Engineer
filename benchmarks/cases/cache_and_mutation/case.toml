@@ -1,0 +1,55 @@
+id = "cache_and_mutation"
+language = "python"
+intent = "A cache-key collision, in-place mutation of a caller's object, and file I/O repeated inside a loop."
+tags = ["correctness", "performance", "aliasing"]
+clean = false
+
+[[defects]]
+id = "cache-key-collision"
+summary = "Cache key joins unescaped fields with a separator that appears in the data"
+category = "correctness"
+severity = "high"
+line = 21
+note = "Use a tuple key or escape the separator."
+keywords = [
+    ["cache", "key"],
+    ["join", "separator", "collide", "collision", "ambig", "delimit", "concat"],
+]
+
+[[defects]]
+id = "caller-mutation"
+summary = "apply_coupon mutates the caller's order dict in place"
+category = "correctness"
+severity = "medium"
+line = 39
+end_line = 41
+note = "Return a copy instead of mutating the argument."
+keywords = [
+    ["mutat", "in place", "argument", "caller"],
+    ["copy", "side effect", "original", "modify", "mutate"],
+]
+
+[[defects]]
+id = "io-in-loop"
+summary = "The catalogue file is reopened and reparsed on every iteration"
+category = "performance"
+severity = "medium"
+line = 47
+end_line = 49
+note = "Read the catalogue once before the loop."
+keywords = [
+    ["loop", "iteration", "each"],
+    ["file", "open", "read", "catalogue", "reopen", "re-read", "io"],
+]
+
+[[defects]]
+id = "unbounded-cache"
+summary = "Module-level cache grows without bound"
+category = "performance"
+severity = "low"
+line = 34
+note = "Bound the cache or use an LRU with a maximum size."
+keywords = [
+    ["cache"],
+    ["unbounded", "grows", "memory", "evict", "size", "limit", "leak"],
+]

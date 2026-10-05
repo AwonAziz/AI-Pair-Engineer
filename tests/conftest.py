@@ -8,6 +8,7 @@ each agent imports from, which is the only seam that matters here.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -165,12 +166,39 @@ def _no_real_api_calls(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
 
     def _explode(*args: Any, **kwargs: Any) -> None:
         raise AssertionError(
-            f"{request.node.name} attempted a real LLM call; patch "
-            "ai_pair_engineer.agents.base.ask_llm instead"
+            f"{request.node.name} attempted a real LLM call; patch one of "
+            "ai_pair_engineer.agents.base.ask_llm or benchmarks.runner.ask_naive"
         )
 
     monkeypatch.setattr(llm_module, "get_client", _explode)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+
+@pytest.fixture
+def mock_llm(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Intercept every model call the benchmark harness can make.
+
+    Two seams exist and both must be covered: the analyzer tiers call
+    ``ask_llm`` through ``agents.base``, while the naive tier and the naive
+    reviewer call ``benchmarks.runner`` directly.
+
+    Returns a setter taking the response each call should return.
+    """
+    holder: dict[str, Any] = {"response": "", "calls": 0}
+
+    def _answer(*args: Any, **kwargs: Any) -> str:
+        holder["calls"] += 1
+        return holder["response"]
+
+    monkeypatch.setattr("ai_pair_engineer.agents.base.ask_llm", lambda *a, **k: _answer(*a, **k))
+    monkeypatch.setattr("benchmarks.runner.ask_naive", lambda *a, **k: _answer(*a, **k))
+
+    def _setter(response: str) -> None:
+        holder["response"] = response
+
+    _setter.calls = lambda: holder["calls"]  # type: ignore[attr-defined]
+    _setter.set = _setter  # type: ignore[attr-defined]
+    return _setter
 
 
 @pytest.fixture

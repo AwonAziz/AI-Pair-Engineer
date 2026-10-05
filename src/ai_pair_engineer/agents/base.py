@@ -16,7 +16,13 @@ from pydantic import BaseModel
 
 from ai_pair_engineer.models.schemas import Category, Finding, Severity
 from ai_pair_engineer.prompts import load_prompt
-from ai_pair_engineer.services.llm import LLMResponseError, ask_llm, parse_structured_response
+from ai_pair_engineer.services.llm import (
+    LLMResponseError,
+    TokenUsage,
+    ask_llm,
+    estimate_cost_usd,
+    parse_structured_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +44,7 @@ class StageError(RuntimeError):
     """A stage could not produce a valid result."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class StageUsage:
     """Token and call accounting for one stage run."""
 
@@ -47,6 +53,16 @@ class StageUsage:
     attempts: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: float = 0.0
+
+    def record(self, usage: TokenUsage) -> None:
+        """Accumulate one completed provider call."""
+        self.attempts += 1
+        self.input_tokens += usage.prompt_tokens
+        self.output_tokens += usage.completion_tokens
+        self.cost_usd += estimate_cost_usd(usage)
+        if usage.model:
+            self.model = usage.model
 
     @property
     def total_tokens(self) -> int:
@@ -60,6 +76,7 @@ class StageUsage:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
+            "cost_usd": round(self.cost_usd, 6),
         }
 
 
@@ -76,10 +93,20 @@ class PipelineTrace:
     def total_tokens(self) -> int:
         return sum(stage.total_tokens for stage in self.stages)
 
+    @property
+    def total_calls(self) -> int:
+        return sum(stage.attempts for stage in self.stages)
+
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(stage.cost_usd for stage in self.stages)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "stages": [stage.to_dict() for stage in self.stages],
             "total_tokens": self.total_tokens,
+            "total_calls": self.total_calls,
+            "total_cost_usd": round(self.total_cost_usd, 6),
         }
 
 
@@ -154,8 +181,18 @@ class Agent(ABC, Generic[ResultT]):
     #: Human-readable name used in logs and the trace.
     stage_name: str
 
-    def __init__(self, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        usage: StageUsage | None = None,
+    ) -> None:
         self.model = model
+        self._temperature_override = temperature
+        # Every stage carries its own accounting so a caller can read the cost
+        # of one stage without reconstructing the whole trace.
+        self.usage = usage or StageUsage(stage=self.stage_name, model=model or "(default)")
 
     @abstractmethod
     def build_user_prompt(self) -> str:
@@ -167,6 +204,17 @@ class Agent(ABC, Generic[ResultT]):
 
     @property
     def temperature(self) -> float:
+        """Sampling temperature for this stage.
+
+        A subclass override (``DEFAULT_TEMPERATURE``) is used unless the caller
+        passes one explicitly. Benchmarks pass 0 to make runs comparable.
+        """
+        if self._temperature_override is not None:
+            return self._temperature_override
+        return self.default_temperature
+
+    @property
+    def default_temperature(self) -> float:
         return DEFAULT_TEMPERATURE
 
     def run(self) -> ResultT:
@@ -185,6 +233,7 @@ class Agent(ABC, Generic[ResultT]):
                 user_prompt=user_prompt,
                 model=self.model,
                 temperature=self.temperature,
+                on_usage=self.usage.record,
             )
             try:
                 return parse_structured_response(raw, self.schema)

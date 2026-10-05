@@ -41,8 +41,14 @@ jobs:
       - name: Typecheck
         run: mypy
 
+      - name: Validate the benchmark corpus
+        # Needs no API key and no network. A corpus whose annotations have
+        # drifted would make every benchmark number meaningless, so this fails
+        # the build rather than being left to a human to notice.
+        run: python -m benchmarks validate
+
       - name: Test with coverage
-        run: pytest --cov=ai_pair_engineer --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=ai_pair_engineer --cov=benchmarks --cov-report=xml --cov-report=term-missing
 
       - name: Verify the packaging metadata
         run: |

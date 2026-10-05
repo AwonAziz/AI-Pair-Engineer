@@ -37,15 +37,17 @@ class ReviewerAgent(Agent[FinalReview]):
         analyzer_findings: list[Finding] | None = None,
         *,
         model: str | None = None,
+        temperature: float | None = None,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, temperature=temperature)
         self.original_code = require_source(original_code, field_name="Original code")
         self.refactored_code = require_source(refactored_code, field_name="Refactored code")
         self.generated_tests = generated_tests or []
         self.analyzer_findings = analyzer_findings or []
 
     @property
-    def temperature(self) -> float:
+    def default_temperature(self) -> float:
+        """Zero, so a given pair of versions always reviews the same way."""
         return 0.0
 
     def _tests_in_scope(self) -> list[TestCase]:

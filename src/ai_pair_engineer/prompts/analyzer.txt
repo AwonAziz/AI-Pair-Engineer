@@ -6,12 +6,12 @@ those over your own guesses.
 
 Look for, in this order of importance:
 
-1. Correctness defects: crashes, wrong results, unhandled failure paths,
-   resource leaks, race conditions, off-by-one and boundary errors.
+1. Correctness defects: wrong results, unwanted side effects, duplicated work,
+   off-by-one and boundary errors, inverted conditions.
 2. Security problems: injection, unsafe deserialization, secrets in source,
    missing authentication or authorisation, unsafe defaults.
 3. Error handling gaps: swallowed exceptions, bare excepts, incorrect
-   exception types, errors that lose context.
+   exception types, errors that lose context, unclosed resources.
 4. Maintainability and complexity: functions doing several jobs, deep nesting,
    duplication, dead code, unclear names, missing abstractions that the code
    clearly needs.
@@ -35,7 +35,7 @@ Return a JSON object with exactly this shape:
   "findings": [
     {
       "severity": "low | medium | high | critical",
-      "category": "code_smell | maintainability | readability | architecture | complexity | error_handling | performance | security | duplication",
+      "category": "correctness | code_smell | maintainability | readability | architecture | complexity | error_handling | performance | security | duplication",
       "title": "short noun phrase naming the problem",
       "description": "what is wrong, where, and why it matters",
       "recommendation": "the specific change to make",

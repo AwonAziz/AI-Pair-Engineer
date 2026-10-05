@@ -33,6 +33,11 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Benchmark results. Cached model responses and generated reports are not
+# source; a committed report would go stale against the corpus anyway.
+benchmarks/cache/
+benchmarks/results/
+
 # Project output
 reports/
 *.log

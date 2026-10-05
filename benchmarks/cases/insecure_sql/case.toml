@@ -1,0 +1,42 @@
+id = "insecure_sql"
+language = "python"
+intent = "SQL injection through f-string query construction, plus a leaked cursor in a loop."
+tags = ["security", "database", "resource-leak"]
+clean = false
+
+[[defects]]
+id = "sql-injection"
+summary = "Query built by interpolating user_id into SQL text"
+category = "security"
+severity = "critical"
+line = 14
+note = "Use a parameterised query with a placeholder."
+keywords = [
+    ["sql", "query", "cursor.execute"],
+    ["interpolat", "f-string", "format", "concat", "injection", "string building"],
+    ["user_id", "user id"],
+]
+
+[[defects]]
+id = "sql-injection-loop"
+summary = "The same interpolated query pattern repeats in a loop"
+category = "security"
+severity = "critical"
+line = 23
+note = "Parameterise the LIKE query too."
+keywords = [
+    ["like", "prefix", "query"],
+    ["interpolat", "f-string", "injection", "format"],
+]
+
+[[defects]]
+id = "connection-leak"
+summary = "Connection opened inside a loop and never closed"
+category = "error_handling"
+severity = "medium"
+line = 20
+note = "Close the connection, or use a context manager."
+keywords = [
+    ["connect", "connection", "cursor"],
+    ["close", "leak", "not closed", "never closed", "context manager", "unclosed"],
+]

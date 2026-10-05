@@ -1,0 +1,56 @@
+id = "payment_reconciliation"
+language = "python"
+intent = "Swallowed exceptions, a duplicated side effect on the retry path, and an unvalidated type crossing a boundary."
+tags = ["error-handling", "correctness", "resource-leak"]
+clean = false
+
+[[defects]]
+id = "swallowed-exception"
+summary = "A bare Exception handler treats a failure as a discrepancy and continues"
+category = "error_handling"
+severity = "high"
+line = 45
+end_line = 46
+note = "Let the exception propagate, or log it with its type."
+keywords = [
+    ["except", "exception", "try"],
+    ["swallow", "silently", "hide", "ignored", "not raised", "mask"],
+]
+
+[[defects]]
+id = "unvalidated-total"
+summary = "order['total'] is used in arithmetic with no type check"
+category = "error_handling"
+severity = "medium"
+line = 23
+note = "Validate that total is numeric before multiplying."
+keywords = [
+    ["total"],
+    ["type", "numeric", "validat", "string", "unvalidated", "coerc", "check"],
+]
+
+[[defects]]
+id = "double-charge"
+summary = "The charge is repeated when the response says a discount was applied"
+category = "correctness"
+severity = "critical"
+line = 57
+end_line = 58
+note = "Apply the discount to the amount instead of charging again."
+keywords = [
+    ["charge", "payment", "side effect"],
+    ["twice", "duplicate", "double", "again", "repeat", "second"],
+]
+
+[[defects]]
+id = "unclosed-reads"
+summary = "Files are opened for reading and never closed"
+category = "error_handling"
+severity = "low"
+line = 27
+end_line = 28
+note = "Use a with block or pathlib.read_text."
+keywords = [
+    ["open"],
+    ["not closed", "never closed", "leak", "context manager", "unclosed", "close"],
+]

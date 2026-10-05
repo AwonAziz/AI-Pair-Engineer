@@ -1,0 +1,55 @@
+id = "command_dispatch"
+language = "python"
+intent = "eval on user input, a dead safety flag, and a retry loop over a non-idempotent side effect."
+tags = ["security", "correctness", "dead-code"]
+clean = false
+
+[[defects]]
+id = "eval-injection"
+summary = "eval executes a string built from command-line input"
+category = "security"
+severity = "critical"
+line = 26
+note = "Dispatch through a dict of callables instead of eval."
+keywords = [
+    ["eval"],
+    ["injection", "execute", "arbitrary", "untrusted", "input", "unsafe"],
+]
+
+[[defects]]
+id = "allowlist-bypass"
+summary = "The allowlist check does not protect the eval it precedes"
+category = "security"
+severity = "high"
+line = 23
+end_line = 26
+note = "Arguments are still interpolated, so the allowlist does not bound what runs."
+keywords = [
+    ["allowlist", "whitelist", "allowed", "validation", "sanit"],
+    ["bypass", "insufficient", "not enough", "does not", "ineffective", "args"],
+]
+
+[[defects]]
+id = "dead-safety-flag"
+summary = "_safe_mode is assigned but never read, so the switch does nothing"
+category = "code_smell"
+severity = "high"
+line = 32
+note = "Either enforce the flag or delete it."
+keywords = [
+    ["_safe_mode", "safe_mode", "flag", "switch"],
+    ["unused", "dead", "never read", "not read", "no effect", "does nothing", "write-only"],
+]
+
+[[defects]]
+id = "retry-non-idempotent"
+summary = "A retry loop repeats a command that may already have taken effect"
+category = "correctness"
+severity = "high"
+line = 39
+end_line = 44
+note = "Only retry commands that are safe to repeat, or make them idempotent."
+keywords = [
+    ["retry", "retries", "attempt"],
+    ["idempotent", "duplicate", "twice", "repeat", "side effect", "already"],
+]

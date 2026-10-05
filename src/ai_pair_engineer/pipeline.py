@@ -23,7 +23,6 @@ from ai_pair_engineer.agents import (
     PipelineTrace,
     RefactorAgent,
     ReviewerAgent,
-    StageUsage,
     TesterAgent,
 )
 from ai_pair_engineer.models.schemas import (
@@ -121,6 +120,7 @@ def run_pipeline(
     source_code: str,
     *,
     model: str | None = None,
+    temperature: float | None = None,
     on_progress: ProgressHook | None = None,
     static_report: StaticReport | None = None,
 ) -> PipelineResult:
@@ -130,6 +130,9 @@ def run_pipeline(
         language: one of :data:`SUPPORTED_LANGUAGES`, case-insensitive.
         source_code: the code to review. Treated as untrusted data.
         model: optional model override forwarded to every stage.
+        temperature: optional override for every stage's sampling temperature.
+            Each stage has its own default; the reviewer pins itself to 0.
+            Pass 0 to make a run reproducible.
         on_progress: optional callback invoked as each stage starts and ends.
         static_report: precomputed local analysis, to avoid re-parsing.
 
@@ -148,15 +151,21 @@ def run_pipeline(
     trace = PipelineTrace()
 
     analysis = _timed(
-        AnalyzerAgent(normalized, source_code, report, model=model), trace, on_progress
+        AnalyzerAgent(normalized, source_code, report, model=model, temperature=temperature),
+        trace,
+        on_progress,
     )
     tests = _timed(
-        TesterAgent(normalized, source_code, analysis.findings, model=model),
+        TesterAgent(
+            normalized, source_code, analysis.findings, model=model, temperature=temperature
+        ),
         trace,
         on_progress,
     )
     refactor = _timed(
-        RefactorAgent(normalized, source_code, analysis.findings, model=model),
+        RefactorAgent(
+            normalized, source_code, analysis.findings, model=model, temperature=temperature
+        ),
         trace,
         on_progress,
     )
@@ -167,16 +176,19 @@ def run_pipeline(
             tests.tests,
             analysis.findings,
             model=model,
+            temperature=temperature,
         ),
         trace,
         on_progress,
     )
 
+    elapsed = time.perf_counter() - started
     logger.info(
-        "Pipeline finished in %.1fs using %d tokens across %d stages",
-        time.perf_counter() - started,
+        "Pipeline finished in %.1fs using %d tokens across %d stages ($%.4f)",
+        elapsed,
         trace.total_tokens,
         len(trace.stages),
+        trace.total_cost_usd,
     )
 
     return PipelineResult(
@@ -204,7 +216,9 @@ def _timed(agent: Any, trace: PipelineTrace, on_progress: ProgressHook | None) -
         if on_progress is not None:
             on_progress(agent.stage_name, f"finished in {elapsed:.1f}s")
 
-    trace.record(StageUsage(stage=agent.stage_name, model=agent.model or "(default)"))
+    # The agent already accumulated its own token accounting; record that
+    # rather than constructing an empty usage object here.
+    trace.record(agent.usage)
     return result
 
 

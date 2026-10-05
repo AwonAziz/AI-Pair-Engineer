@@ -1,0 +1,12 @@
+id = "truthiness_check"
+language = "python"
+change = "`if \"price\" in item` became `if item.get(\"price\")`. The refactor now skips a price of 0, which the original counted. A free item contributes nothing to the total."
+tags = ["truthiness", "boundary"]
+expected = [
+    "zero",
+    "falsy",
+    "0",
+    "free",
+    "skipped",
+    "truthiness",
+]

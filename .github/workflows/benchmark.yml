@@ -1,0 +1,116 @@
+name: Benchmark
+
+# Runs the planted-defect corpus and publishes the result to the job summary.
+#
+# Scheduled rather than on every push because it costs real money per run, and
+# because a number that changes every commit is not a number anyone can read.
+# Needs OPENROUTER_API_KEY; skips cleanly without it so forks are not broken.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Defect detection
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [static, naive, analyzer, analyzer+static]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e .
+
+      - name: Validate the corpus
+        run: python -m benchmarks validate
+
+      - name: Run the tier
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MODEL: ${{ vars.BENCHMARK_MODEL || 'deepseek/deepseek-chat' }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ] && [ "${{ matrix.tier }}" != "static" ]; then
+            echo "OPENROUTER_API_KEY not configured; skipping ${{ matrix.tier }}."
+            exit 0
+          fi
+
+          mkdir -p benchmarks/results
+          python -m benchmarks run \
+            --tiers "${{ matrix.tier }}" \
+            --breakdown \
+            --verbose \
+            --out "benchmarks/results/${{ matrix.tier }}.md"
+
+          cat "benchmarks/results/${{ matrix.tier }}.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.tier }}
+          path: benchmarks/results/${{ matrix.tier }}.md
+          if-no-files-found: ignore
+
+  regressions:
+    name: Reviewer regression detection
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e .
+
+      - name: Compare the adversarial reviewer against a plain prompt
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MODEL: ${{ vars.BENCHMARK_MODEL || 'deepseek/deepseek-chat' }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY not configured; skipping."
+            exit 0
+          fi
+
+          mkdir -p benchmarks/results
+
+          python -m benchmarks run --tiers analyzer+static --regressions \
+            --out benchmarks/results/reviewer-adversarial.md
+          python -m benchmarks run --tiers analyzer+static --regressions-baseline \
+            --out benchmarks/results/reviewer-naive.md
+
+          {
+            echo "## Adversarial reviewer"
+            echo
+            cat benchmarks/results/reviewer-adversarial.md
+            echo
+            echo "## Plain reviewer prompt"
+            echo
+            cat benchmarks/results/reviewer-naive.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-regressions
+          path: benchmarks/results/
+          if-no-files-found: ignore

@@ -31,6 +31,12 @@ SEVERITY_WEIGHTS: dict[Severity, int] = {
 
 
 class Category(StrEnum):
+    # A correctness defect is one that produces the wrong answer or an unwanted
+    # side effect. It is kept separate from error_handling because the two call
+    # for different responses: a correctness defect needs a logic fix, an
+    # error_handling defect needs a failure path. Conflating them is what makes
+    # a reviewer's findings hard to act on.
+    CORRECTNESS = "correctness"
     CODE_SMELL = "code_smell"
     MAINTAINABILITY = "maintainability"
     READABILITY = "readability"
@@ -55,10 +61,12 @@ REFACTOR_CATEGORIES: frozenset[Category] = frozenset(
     }
 )
 
-# Categories that describe "the code fails, crashes, or is unsafe". These drive
-# the test generation stage.
+# Categories that describe "the code is wrong, crashes, or is unsafe". These
+# drive the test generation stage: a test exists to pin behaviour that is at
+# risk of changing silently.
 TEST_CATEGORIES: frozenset[Category] = frozenset(
     {
+        Category.CORRECTNESS,
         Category.ERROR_HANDLING,
         Category.SECURITY,
     }

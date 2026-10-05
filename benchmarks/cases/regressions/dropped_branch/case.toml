@@ -1,0 +1,12 @@
+id = "dropped_branch"
+language = "python"
+change = "The entire admin-role branch was deleted during the refactor. Admins are no longer marked as admins in the outbound payload, so they are sent with the wrong privileges."
+tags = ["completeness", "authorization"]
+expected = [
+    "admin",
+    "role",
+    "branch",
+    "removed",
+    "privilege",
+    "dropped",
+]

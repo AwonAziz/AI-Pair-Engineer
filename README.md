@@ -182,6 +182,109 @@ diff and comments on the pull request.
 
 ---
 
+## Does it actually find anything?
+
+Claims about AI code review are cheap; measurements are not. This repository
+ships the harness used to produce its own numbers.
+
+A corpus of files with **22 defects deliberately planted** across 7 files,
+including one clean file so false positives are measurable. Four strategies are
+run against it:
+
+| Tier | What it is |
+|---|---|
+| `static` | Local AST analysis. No model, no cost, deterministic. |
+| `naive` | One unstructured call: "review this code, return JSON". The baseline. |
+| `analyzer` | The real analyzer prompt, no local evidence. |
+| `analyzer+static` | The real analyzer prompt, with local evidence. |
+
+```bash
+python -m benchmarks validate                        # no API key, runs in CI
+python -m benchmarks run --tiers static              # free, no API key
+python -m benchmarks run --tiers all --breakdown     # needs a key
+python -m benchmarks run --tiers analyzer+static --regressions
+```
+
+### Measured, so far
+
+The static tier, on the corpus as it stands:
+
+```
+| Tier        | Recall | Groundedness | Findings | Clean-file noise |
+|-------------|--------|--------------|----------|------------------|
+| static only |   9.1% |       100.0% |        4 |            0.0%  |
+```
+
+Read that carefully, because it is unflattering and correct: local analysis
+catches 2 of 22 planted defects, because the corpus mostly contains problems
+that need semantic understanding. It produces zero noise on the clean file, and
+every finding it makes is real. That is the right shape for a free tier — a
+narrow, precise detector — and it is the honest baseline the model tiers have
+to beat.
+
+Model-tier numbers depend on the model and are published from
+[the weekly benchmark run](.github/workflows/benchmark.yml) rather than
+hardcoded here, because a stale figure in a README is worse than none.
+
+### Why the scoring is careful
+
+This is the part that decides whether a benchmark means anything.
+
+- **Recall** — of the defects planted, how many were reported. This is the
+  headline, because a missed injection is worse than a noisy review.
+- **Groundedness** — of the findings produced, what share match a real planted
+  defect. This is a *noise signal, not precision*, and the report says so in the
+  same document as the number. A finding matching no annotated defect may be a
+  genuine problem the corpus did not record; counting those as errors would
+  measure the annotations rather than the tool.
+- **Clean-file noise** — findings on files with no planted defects. Here a
+  finding really is very likely a false positive, so this is the one place
+  false-positive counting is meaningful.
+
+Two independent match rules, because each covers a different way to be right: a
+finding is credited if it names a line inside the defect's span (`located`), or
+if it contains every keyword group in the defect's annotation (`semantic`). A
+model that miscounts lines still gets credit for finding the bug.
+
+Every metric carries its own caveat in the output, including the two that would
+otherwise be easy to hide: the corpus is Python-only and hand-written by the
+same person who wrote the analyzer, which is a real conflict of interest; and at
+this corpus size the confidence interval on any recall figure spans several
+percentage points, so differences under about ten points are noise.
+
+### The reviewer comparison
+
+The project's headline claim is that an adversarial reviewer — told to default
+to "not approved", given both versions side by side — catches behaviour changes
+a plain comparison misses. Five regression cases plant exactly one behaviour
+change each: an inverted guard clause, a truthiness check that drops a zero, a
+deleted authorization branch, a type coercion that adds a `ValueError`, removed
+validation.
+
+A case counts as caught only when the reviewer **rejected** the refactor *and*
+**named** the specific change. Rejecting for vague reasons, or approving while
+noticing something, both score as misses.
+
+`--regressions-baseline` runs the same cases against a plain "compare these two
+and tell me if it's safe" prompt. That is the comparison that justifies the
+whole design, so it gets measured rather than asserted.
+
+### Adding a case
+
+```
+benchmarks/cases/my_case/
+    source.py      the file to review, with the defects planted in it
+    case.toml      the annotations
+```
+
+`python -m benchmarks validate` runs in CI and fails on a line number that has
+drifted past the end of the file, a defect with no keywords, duplicate ids, or a
+regression pair that differs only in comments. Ground truth rots silently
+otherwise, and a benchmark against drifted ground truth reports a confident
+number that means nothing.
+
+---
+
 ## Design decisions worth arguing about
 
 **Output is validated, not trusted.** Every stage is parsed into a Pydantic
@@ -239,26 +342,32 @@ not execute untrusted code on the host.
 ```bash
 pip install -e ".[dev]"
 
-pytest              # 245 tests, no API key needed, no network
+pytest              # 398 tests, no API key needed, no network
 ruff check .
 ruff format --check .
-mypy                # strict
+mypy                # strict, covers benchmarks/ too
 ```
 
 | Check | Command |
 |---|---|
 | Tests | `pytest` |
-| Coverage | `pytest --cov=ai_pair_engineer --cov-report=term-missing` |
+| Coverage | `pytest --cov=ai_pair_engineer --cov=benchmarks --cov-report=term-missing` |
 | Lint | `ruff check .` |
 | Format | `ruff format .` |
 | Types | `mypy` |
+| Corpus validity | `python -m benchmarks validate` |
 | All of it | `pre-commit run --all-files` |
 
-Coverage is 95% with branch coverage enabled. Every test mocks the LLM boundary,
-and a fixture fails any test that tries to reach the network for real.
+`examples/` and `benchmarks/cases/` are excluded from linting on purpose. Those
+files are intentionally defective, and the defects are the demonstration.
+Type annotations were added to `AnalyzerAgent.__init__` rather than left to the
+exemption, so only the corpus itself is unchecked.
 
-`examples/` is excluded from linting on purpose. Those files are
-intentionally defective, and the defects are the demonstration.
+Measured cost is now real rather than assumed: `ask_llm` reports the token
+counts the provider returns, each stage accumulates its own usage, and the
+pipeline trace totals them with an estimated dollar figure. A provider that does
+not report usage yields zeros instead of an exception, so a run against an
+unpriced backend still reports what it knows.
 
 ---
 
@@ -267,22 +376,34 @@ intentionally defective, and the defects are the demonstration.
 ```
 src/ai_pair_engineer/
 ├── agents/
-│   ├── base.py        # shared stage machinery, context budgeting
+│   ├── base.py        # shared stage machinery, context budgeting, usage
 │   ├── analyzer.py    # stage 1
 │   ├── tester.py      # stage 2
 │   ├── refactor.py    # stage 3
 │   └── reviewer.py    # stage 4
 ├── models/schemas.py  # Pydantic contracts + severity weights
-├── services/llm.py    # client, retries, JSON recovery
+├── services/llm.py    # client, retries, JSON recovery, token accounting
 ├── static/
 │   └── python_analyzer.py   # AST analysis, no API key needed
 ├── prompts/           # packaged, loaded via importlib.resources
 ├── pipeline.py        # orchestration
 └── cli.py             # command line interface
+
+benchmarks/
+├── models.py          # PlantedDefect, DetectionCase, RegressionCase, Tier
+├── corpus.py          # loads cases from disk, validates annotations
+├── matching.py        # finding -> defect, by line or by keyword groups
+├── scoring.py         # recall, groundedness, clean noise, breakdowns
+├── runner.py          # tier execution, caching, cost accounting
+├── report.py          # Markdown and JSON
+├── validate.py        # corpus integrity checks, run in CI
+└── cases/             # the corpus
 ```
 
 Prompts are package data loaded through `importlib.resources`, so they resolve
-regardless of the working directory.
+regardless of the working directory. `benchmarks/` sits outside `src/` and is not
+in the wheel: it is a tool for this repository and ships with the corpus it
+measures.
 
 ---
 
@@ -314,10 +435,12 @@ tools do.
 - [ ] Sandboxed test execution with resource limits
 - [ ] SARIF output for GitHub code scanning
 - [ ] AST-aware refactoring verification
-- [ ] A benchmark corpus with known planted defects, to measure whether this
-      actually catches them
+- [ ] **An independent corpus.** The current one was written by the same person
+      who wrote the analyzer, which is the benchmark's weakest point and the one
+      an interviewer would press on first.
 
-The benchmark is the one that matters most. Everything else is plumbing.
+The benchmark harness exists. The corpus being self-authored is the limitation
+it has not solved.
 
 ---
 

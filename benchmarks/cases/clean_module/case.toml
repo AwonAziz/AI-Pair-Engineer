@@ -1,0 +1,6 @@
+id = "clean_module"
+language = "python"
+intent = "A deliberately clean module, used to measure false positives rather than recall."
+tags = ["clean", "false-positives"]
+clean = true
+defects = []

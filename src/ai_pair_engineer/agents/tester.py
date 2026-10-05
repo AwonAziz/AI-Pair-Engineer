@@ -32,8 +32,9 @@ class TesterAgent(Agent[TestResult]):
         analyzer_findings: list[Finding] | None = None,
         *,
         model: str | None = None,
+        temperature: float | None = None,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, temperature=temperature)
         self.language = language
         self.source_code = require_source(source_code)
         self.analyzer_findings = analyzer_findings or []

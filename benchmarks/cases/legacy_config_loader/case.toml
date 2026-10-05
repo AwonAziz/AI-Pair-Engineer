@@ -1,0 +1,57 @@
+id = "legacy_config_loader"
+language = "python"
+intent = "The two patterns local static analysis targets exactly, plus a swallowed exception that only a model tier should find."
+tags = ["error-handling", "shared-state", "static-analysis-target"]
+clean = false
+
+# This case exists so the no-model tier has something to detect. Without it,
+# static recall reads 0% and the tier looks useless for reasons that have
+# nothing to do with the tool.
+
+[[defects]]
+id = "bare-except"
+summary = "A bare except: turns a missing or malformed file into silently empty config"
+category = "error_handling"
+severity = "high"
+line = 23
+note = "Catch OSError and json.JSONDecodeError separately and log them."
+keywords = [
+    ["bare", "empty", "swallow"],
+    ["except", "silently"],
+]
+
+[[defects]]
+id = "bare-except-parse"
+summary = "A second bare except: hides every int() conversion failure"
+category = "error_handling"
+severity = "high"
+line = 38
+note = "Catch ValueError and report which value failed."
+keywords = [
+    ["bare", "empty", "swallow", "skip"],
+    ["except", "silently", "conversion"],
+]
+
+[[defects]]
+id = "mutable-default-overrides"
+summary = "overrides={} is evaluated once and shared by every caller"
+category = "error_handling"
+severity = "high"
+line = 16
+note = "Default to None and create the dict inside the function."
+keywords = [
+    ["mutable", "shared", "default"],
+    ["state", "across calls", "accumulate", "leak", "alias", "argument"],
+]
+
+[[defects]]
+id = "mutable-default-seen"
+summary = "seen=[] persists across calls, so the list grows for the life of the process"
+category = "correctness"
+severity = "high"
+line = 30
+note = "Build the list per call instead of accumulating into a default."
+keywords = [
+    ["seen", "accumulate", "grows", "persist"],
+    ["call", "state", "across", "history", "list"],
+]

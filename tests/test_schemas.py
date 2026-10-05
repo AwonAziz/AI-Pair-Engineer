@@ -201,5 +201,20 @@ class TestCategorySets:
         assert Category.COMPLEXITY in REFACTOR_CATEGORIES
         assert Category.DUPLICATION in REFACTOR_CATEGORIES
 
-    def test_test_categories_are_the_failure_paths(self) -> None:
-        assert {Category.SECURITY, Category.ERROR_HANDLING} == TEST_CATEGORIES
+    def test_test_categories_cover_the_failure_paths(self) -> None:
+        """Correctness defects reach the tester: they are what tests exist to pin."""
+        assert {
+            Category.CORRECTNESS,
+            Category.ERROR_HANDLING,
+            Category.SECURITY,
+        } == TEST_CATEGORIES
+
+    def test_test_categories_exclude_style(self) -> None:
+        """No test can meaningfully cover a naming preference."""
+        assert Category.READABILITY not in TEST_CATEGORIES
+        assert Category.COMPLEXITY not in TEST_CATEGORIES
+
+    def test_correctness_is_not_a_refactor_category(self) -> None:
+        """Fixing a bug mid-refactor is unreviewable, so it is excluded there."""
+        assert Category.CORRECTNESS not in REFACTOR_CATEGORIES
+        assert Category.SECURITY not in REFACTOR_CATEGORIES

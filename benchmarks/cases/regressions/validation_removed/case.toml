@@ -1,0 +1,12 @@
+id = "validation_removed"
+language = "python"
+change = "Two validation checks were removed. The minimum-length check and the dot-in-domain check are both gone, so `a@b` and `x@localhost` are now accepted."
+tags = ["validation", "security"]
+expected = [
+    "length",
+    "dot",
+    "domain",
+    "weaker",
+    "removed",
+    "accepts",
+]

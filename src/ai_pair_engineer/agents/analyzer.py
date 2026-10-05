@@ -28,10 +28,13 @@ class AnalyzerAgent(Agent[AnalysisResult]):
         static_report: StaticReport | None = None,
         *,
         model: str | None = None,
+        temperature: float | None = None,
+        include_static: bool = True,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, temperature=temperature)
         self.language = language
         self.source_code = require_source(source_code)
+        self.include_static = include_static
         self.static_report = (
             static_report
             if static_report is not None
@@ -44,14 +47,18 @@ class AnalyzerAgent(Agent[AnalysisResult]):
             "",
             "Source code:",
             _truncate(self.source_code),
-            "",
-            "Deterministic static analysis (verified locally, trust the line numbers):",
-            *self.static_report.summary_lines(),
         ]
 
-        if self.static_report.untested_function_names:
-            names = ", ".join(self.static_report.untested_function_names)
-            sections += ["", f"Public functions needing coverage: {names}"]
+        if self.include_static:
+            sections += [
+                "",
+                "Deterministic static analysis (verified locally, trust the line numbers):",
+                *self.static_report.summary_lines(),
+            ]
+
+            if self.static_report.untested_function_names:
+                names = ", ".join(self.static_report.untested_function_names)
+                sections += ["", f"Public functions needing coverage: {names}"]
 
         sections += [
             "",

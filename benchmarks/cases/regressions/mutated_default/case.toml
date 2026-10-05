@@ -1,0 +1,12 @@
+id = "mutated_default"
+language = "python"
+change = "The refactor coerces `port` to int. The original returned whatever was in the file, so a caller reading `settings[\"port\"]` now gets an int where it previously got the raw string, and a non-numeric value now raises ValueError instead of being returned."
+tags = ["type-change", "exception"]
+expected = [
+    "port",
+    "int",
+    "type",
+    "ValueError",
+    "coerce",
+    "raise",
+]

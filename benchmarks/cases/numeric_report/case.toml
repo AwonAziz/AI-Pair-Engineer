@@ -1,0 +1,43 @@
+id = "numeric_report"
+language = "python"
+intent = "Off-by-one and rounding errors that look correct at a glance."
+tags = ["correctness", "boundary"]
+clean = false
+
+[[defects]]
+id = "truncated-percentage"
+summary = "int() truncates the percentage instead of rounding it"
+category = "correctness"
+severity = "medium"
+line = 18
+note = "Use round() and keep the fractional part."
+keywords = [
+    ["percentage", "percent"],
+    ["truncat", "round", "int", "precision", "loses", "floor"],
+]
+
+[[defects]]
+id = "boundary-bucket"
+summary = "The upper bound is inclusive, so the boundary value lands in the lower bucket"
+category = "correctness"
+severity = "medium"
+line = 24
+end_line = 25
+note = "Use a half-open interval so the boundary is unambiguous."
+keywords = [
+    ["bucket", "boundary", "bound"],
+    ["inclusive", "off-by-one", "edge", "<=", "boundary value", "ambiguous"],
+]
+
+[[defects]]
+id = "empty-mean"
+summary = "mean returns 0.0 for an empty sequence, which is indistinguishable from a real mean"
+category = "correctness"
+severity = "medium"
+line = 35
+end_line = 36
+note = "Raise on an empty sequence, or return None."
+keywords = [
+    ["mean", "average", "empty"],
+    ["0.0", "zero", "silently", "misleading", "distinguish", "raise", "instead"],
+]

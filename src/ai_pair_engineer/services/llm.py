@@ -16,6 +16,7 @@ import logging
 import os
 import random
 import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 from dotenv import load_dotenv
@@ -25,8 +26,38 @@ from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
+
+class TokenUsage(BaseModel):
+    """Measured token consumption for one provider call."""
+
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "deepseek/deepseek-chat"
+
+# Published per-million-token prices, used only to turn measured token counts
+# into a dollar figure in benchmark reports. These drift, so treat the cost
+# column as an estimate and the token counts as the real measurement. Anything
+# unpriced reports zero rather than a guess.
+USD_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
+    "anthropic/claude-3.5-sonnet": (3.00, 15.00),
+    "anthropic/claude-sonnet-4": (3.00, 15.00),
+    "anthropic/claude-opus-4": (15.00, 75.00),
+    "openai/gpt-4o": (2.50, 10.00),
+    "openai/gpt-4o-mini": (0.15, 0.60),
+    "google/gemini-2.5-flash": (0.30, 2.50),
+    "google/gemini-2.5-pro": (1.25, 10.00),
+    "meta-llama/llama-3.3-70b-instruct": (0.12, 0.30),
+    "deepseek/deepseek-chat": (0.27, 1.10),
+    "qwen/qwen-2.5-72b-instruct": (0.12, 0.39),
+}
 
 # Exponential backoff ceiling. Without a cap, a persistently rate-limited key
 # produces multi-minute sleeps inside a Streamlit request handler.
@@ -99,12 +130,17 @@ def ask_llm(
     temperature: float = 0.1,
     max_tokens: int = 4096,
     max_retries: int = 3,
+    on_usage: Callable[[TokenUsage], None] | None = None,
 ) -> str:
     """Send one chat completion and return the raw assistant text.
 
     Retries transport failures with exponential backoff plus jitter. The
     assistant's content is never logged or included in error messages, since
     it embeds the user's submitted source code.
+
+    ``on_usage`` is called with the token counts for each attempt that reached
+    the provider, so a caller can total real spend. A benchmark cannot report a
+    cost it did not measure.
 
     Raises:
         MissingAPIKeyError: no API key configured.
@@ -130,6 +166,8 @@ def ask_llm(
             )
             content = response.choices[0].message.content
             if content and content.strip():
+                if on_usage is not None:
+                    on_usage(_read_usage(response, resolved_model))
                 return content
             last_error = LLMTransportError("provider returned an empty completion")
             logger.warning("Empty completion on attempt %s/%s", attempt, max_retries)
@@ -158,6 +196,46 @@ def ask_llm(
     raise LLMTransportError(
         f"LLM request failed after {max_retries} attempt(s): {_describe(last_error)}"
     ) from last_error
+
+
+def _read_usage(response: Any, model: str) -> TokenUsage:
+    """Extract token counts from a provider response, tolerating absence.
+
+    Not every OpenRouter-compatible endpoint reports usage, and a model routed
+    to a non-OpenAI backend may omit it. A missing count becomes zero rather
+    than an exception, so an unpriced run still reports what it knows.
+    """
+    raw = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(raw, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(raw, "completion_tokens", 0) or 0)
+    return TokenUsage(
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+
+def estimate_cost_usd(usage: TokenUsage) -> float:
+    """Estimate the dollar cost of one call from measured tokens.
+
+    Longest-prefix match on the model id, so provider-prefixed ids like
+    ``anthropic/claude-sonnet-4-20250514`` still resolve. Returns 0.0 for an
+    unpriced model instead of inventing a figure.
+    """
+    pricing = _lookup_pricing(usage.model)
+    if pricing is None:
+        return 0.0
+    input_price, output_price = pricing
+    return (usage.prompt_tokens * input_price + usage.completion_tokens * output_price) / 1_000_000
+
+
+def _lookup_pricing(model: str) -> tuple[float, float] | None:
+    normalized = model.strip().lower()
+    best: tuple[str, tuple[float, float]] | None = None
+    for prefix, pricing in USD_PER_MILLION_TOKENS.items():
+        if normalized.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, pricing)
+    return best[1] if best else None
 
 
 def _backoff_seconds(attempt: int, *, rate_limited: bool) -> float:

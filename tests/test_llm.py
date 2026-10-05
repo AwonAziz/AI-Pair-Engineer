@@ -21,7 +21,9 @@ from ai_pair_engineer.services import llm as llm_module
 from ai_pair_engineer.services.llm import (
     LLMTransportError,
     MissingAPIKeyError,
+    TokenUsage,
     ask_llm,
+    estimate_cost_usd,
     get_client,
     is_configured,
     reset_client,
@@ -67,14 +69,37 @@ def fake_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     llm_module.reset_client()
 
 
+def _record_usage() -> list[TokenUsage]:
+    """Build an ``on_usage`` callback that appends to a list it returns."""
+    recorded: list[TokenUsage] = []
+    return recorded
+
+
+def _completion_without_usage(content: str) -> Any:
+    """A response shaped like a provider that does not report usage."""
+    message = type("Message", (), {"content": content})()
+    choice = type("Choice", (), {"message": message})()
+    return type("Response", (), {"choices": [choice]})()
+
+
 def _client(fake_client: dict[str, Any]) -> Any:
     return fake_client["client"]()
 
 
-def _completion(content: str) -> Any:
+def _completion(
+    content: str,
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> Any:
     message = type("Message", (), {"content": content})()
     choice = type("Choice", (), {"message": message})()
-    return type("Response", (), {"choices": [choice]})()
+    usage = type(
+        "Usage",
+        (),
+        {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    )()
+    return type("Response", (), {"choices": [choice], "usage": usage})()
 
 
 class TestConfiguration:
@@ -193,6 +218,53 @@ class TestSuccessfulRequests:
         ask_llm(SYSTEM, USER, model="explicit/model")
         assert _client(fake_client).chat.completions.calls[0]["model"] == "explicit/model"
 
+    def test_usage_is_not_recorded_without_a_callback(self, fake_client: dict[str, Any]) -> None:
+        _set_behaviour(
+            fake_client, lambda n: _completion("ok", prompt_tokens=10, completion_tokens=5)
+        )
+        ask_llm(SYSTEM, USER)  # must not raise without a callback
+
+
+class TestTokenAccounting:
+    def test_usage_is_reported_to_the_callback(self, fake_client: dict[str, Any]) -> None:
+        _set_behaviour(
+            fake_client, lambda n: _completion("ok", prompt_tokens=120, completion_tokens=45)
+        )
+        recorded: list[TokenUsage] = []
+        ask_llm(SYSTEM, USER, on_usage=recorded.append)
+        assert len(recorded) == 1
+        assert recorded[0].prompt_tokens == 120
+        assert recorded[0].completion_tokens == 45
+        assert recorded[0].total_tokens == 165
+
+    def test_recorded_usage_carries_the_resolved_model(self, fake_client: dict[str, Any]) -> None:
+        _set_behaviour(fake_client, lambda n: _completion("ok"))
+        recorded: list[TokenUsage] = []
+        ask_llm(SYSTEM, USER, model="vendor/some-model", on_usage=recorded.append)
+        assert recorded[0].model == "vendor/some-model"
+
+    def test_a_response_without_usage_yields_zeros(self, fake_client: dict[str, Any]) -> None:
+        """Not every OpenRouter-compatible backend reports usage."""
+        _set_behaviour(fake_client, lambda n: _completion_without_usage("ok"))
+        recorded: list[TokenUsage] = []
+        ask_llm(SYSTEM, USER, on_usage=recorded.append)
+        assert recorded[0].total_tokens == 0
+
+    def test_only_the_successful_attempt_is_reported(self, fake_client: dict[str, Any]) -> None:
+        _set_behaviour(
+            fake_client,
+            lambda n: (
+                _completion("", prompt_tokens=1)
+                if n == 1
+                else _completion("ok", prompt_tokens=2, completion_tokens=3)
+            ),
+        )
+        recorded: list[TokenUsage] = []
+        ask_llm(SYSTEM, USER, max_retries=3, on_usage=recorded.append)
+        # The empty completion produced no content, so it was not billed.
+        assert len(recorded) == 1
+        assert recorded[0].total_tokens == 5
+
 
 class TestRetries:
     def test_retries_an_empty_completion(self, fake_client: dict[str, Any]) -> None:
@@ -239,6 +311,45 @@ class TestRetries:
         _set_behaviour(fake_client, lambda n: _completion(""))
         with pytest.raises(LLMTransportError, match="after 2 attempt"):
             ask_llm(SYSTEM, USER, max_retries=2)
+
+
+class TestCostEstimation:
+    def test_computes_from_measured_tokens(self) -> None:
+        usage = TokenUsage(
+            model="anthropic/claude-sonnet-4", prompt_tokens=1_000_000, completion_tokens=0
+        )
+        assert estimate_cost_usd(usage) == pytest.approx(3.00)
+
+    def test_prices_output_separately(self) -> None:
+        usage = TokenUsage(
+            model="anthropic/claude-sonnet-4", prompt_tokens=0, completion_tokens=1_000_000
+        )
+        assert estimate_cost_usd(usage) == pytest.approx(15.00)
+
+    def test_prices_a_split_call(self) -> None:
+        usage = TokenUsage(
+            model="anthropic/claude-sonnet-4",
+            prompt_tokens=500_000,
+            completion_tokens=100_000,
+        )
+        assert estimate_cost_usd(usage) == pytest.approx(1.50 + 1.50)
+
+    def test_matches_a_dated_model_id(self) -> None:
+        """OpenRouter ids carry a date suffix; the prefix must still resolve."""
+        usage = TokenUsage(model="anthropic/claude-sonnet-4-20250514", prompt_tokens=1_000_000)
+        assert estimate_cost_usd(usage) > 0
+
+    def test_prefers_the_most_specific_prefix(self) -> None:
+        usage = TokenUsage(model="anthropic/claude-3.5-sonnet", prompt_tokens=1_000_000)
+        assert estimate_cost_usd(usage) == pytest.approx(3.00)
+
+    def test_unpriced_model_reports_zero_rather_than_guessing(self) -> None:
+        usage = TokenUsage(model="some-local-model", prompt_tokens=1_000_000)
+        assert estimate_cost_usd(usage) == 0.0
+
+    def test_unknown_model_reports_zero(self) -> None:
+        usage = TokenUsage(model="", prompt_tokens=500)
+        assert estimate_cost_usd(usage) == 0.0
 
 
 class TestBackoff:
